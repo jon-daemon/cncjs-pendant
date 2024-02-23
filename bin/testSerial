@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+
+var serialport = require('serialport');
+const Readline = require('@serialport/parser-readline');
+var port = new serialport('/dev/ttyUSB0', { baudRate:115200 });
+
+const parser = port.pipe(new Readline({ delimiter: '\r\n' }))
+port.on('data', data => console.log({ port: data.toString('utf-8') }))
+parser.on('data', data => console.log({ parser: data }))

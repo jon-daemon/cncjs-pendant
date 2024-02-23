@@ -28,12 +28,12 @@
   },
   "homepage": "https://github.com/minglecm/cncjs-pendant-joystick#readme",
   "dependencies": {
-    "commander": "^5.0.0-4",
-    "inquirer": "^7.3.3",
+    "commander": "^4.1.1",
+    "inquirer": "^6.5.2",
     "jsonwebtoken": "^8.5.1",
-    "lodash": "^4.17.18",
-    "node-hid": "^2.1.1",
-    "serialport": "^8.0.7",
+    "lodash": "^4.17.15",
+    "node-hid": "^0.7.9",
+    "serialport": "^6.2.2",
     "socket.io-client": "^2.3.0"
   }
 }

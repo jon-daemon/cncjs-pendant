@@ -57,7 +57,7 @@ module.exports = function(options, callback) {
     });
 
     socket.on('error', (err) => {
-        console.error('Connection error.');
+        console.error('Connection error', err);
         if (socket) {
             socket.destroy();
             socket = null;
@@ -81,7 +81,7 @@ module.exports = function(options, callback) {
     });
 
     socket.on('serialport:read', function(data) {
-        console.log((data || '').trim());
+        console.log('SERIAL', (data || '').trim());
     });
 
     /*

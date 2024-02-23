@@ -1,0 +1,230 @@
+#!/usr/bin/env node
+
+var fs = require('fs');
+var path = require('path');
+var program = require('commander');
+var serialport = require('serialport');
+const Readline = require('@serialport/parser-readline');
+var inquirer = require('inquirer');
+
+var pkg = require('../package.json');
+var serverMain = require('../index');
+var joystick = require('../joystick');
+var mpg = require('../mpg');
+var buttons = require('../buttons');
+var Machine = require('../machine');
+
+var options = {};
+
+program
+	.version(pkg.version)
+	.usage('-s <secret> -p <port> [options]')
+	.option('-l, --list', 'list available ports then exit')
+	.option('-d, --device <device>', 'pendant device')
+    .option('-s, --secret <secret>', 'the secret key stored in the ~/.cncrc file')
+	.option('-p, --port <port>', 'path or name of serial port')
+	.option('-b, --baudrate <baudrate>', 'baud rate (default: 115200)', 115200)
+	.option('--socket-address <address>', 'socket address or hostname (default: localhost)', 'localhost')
+	.option('--socket-port <port>', 'socket port (default: 8000)', 8000)
+	.option('--controller-type <type>', 'controller type: Grbl|Smoothie|TinyG (default: Grbl)', 'Grbl')
+    .option('--access-token-lifetime <lifetime>', 'access token lifetime in seconds or a time span string (default: 30d)', '30d')
+
+program.parse(process.argv);
+
+var options = {
+    device: program.device,
+    secret: program.secret,
+    port: program.port,
+    baudrate: program.baudrate,
+    socketAddress: program.socketAddress,
+    socketPort: program.socketPort,
+    controllerType: program.controllerType,
+    accessTokenLifetime: program.accessTokenLifetime
+};
+
+var Directions = {
+    Center: "CENTER",
+    North: "NORTH",
+    NorthEast: "NORTHEAST",
+    NorthWest: "NORTHWEST",
+    South: "SOUTH",
+    SouthEast: "SOUTHEAST",
+    SouthWest: "SOUTHWEST",
+    East: "EAST",
+    West: "WEST",
+}
+
+if (options.list) {
+	serialport.list().then(function(ports) {
+		ports.forEach(function(port) {
+			console.log(port.path);
+		});
+	}).catch((err) => {
+        console.error(err)
+        process.exit(1)
+    })
+	return;
+}
+
+var store = {
+    controller: {
+        state: {},
+        settings: {}
+    },
+    sender: {
+        status: {}
+    }
+};
+
+const COMMAND_JOYSTICK_DATA = "JD";
+const COMMAND_BUTTON = "BT";
+const COMMAND_MPG_CLICK = "MC";
+const COMMAND_ON = "on";
+const COMMAND_UNKNOWN = "UNKNOWN";
+
+function joystickDataPayload(parts) {
+    let direction = parts[1];
+    let throwPercent = parts[3]; // [0, 100]
+    let rotation = parts[4]; // [-1, 1]
+
+    return {
+        command: COMMAND_JOYSTICK_DATA,
+        direction,
+        rotation,
+        throwPercent,
+    };
+}
+
+function mpgClickPayload(parts) {
+    let clicks = Number(parts[1]);
+    let axis = parts[2];
+    let distance = Number(parts[3]);
+
+    return {
+        command: COMMAND_MPG_CLICK,
+        axis,
+        clicks,
+        distance,
+    };
+}
+
+function buttonsClickPayload(parts) {
+    let choice = parts[1];
+
+    return {
+        command: COMMAND_BUTTON,
+        choice,
+    };
+}
+
+function getPayload(controllerData) {
+    let line = controllerData.toString('utf-8').replace(/(\r\n|\n|\r)/gm, "");
+    let parts = line.split('|');
+
+    // console.log(parts);
+
+    let command = parts.length ? parts[0] : COMMAND_UNKNOWN;
+
+    switch(command) {
+        case COMMAND_BUTTON:
+            return buttonsClickPayload(parts);
+
+        case COMMAND_JOYSTICK_DATA:
+            return joystickDataPayload(parts);
+
+        case COMMAND_MPG_CLICK:
+            return mpgClickPayload(parts);
+
+        default:
+            return { command };
+    }
+}
+
+var createServer = function(options) {
+    serverMain(options, function(err, socket) {
+        socket.on('Grbl:state', function(state) {
+            store.controller.state = state;
+        });
+
+        socket.on('Grbl:settings', function(settings) {
+            store.controller.settings = settings;
+        });
+
+        socket.on('sender:status', function(data) {
+            store.sender.status = data;
+        });
+
+        console.log('waiting on device', options.device);
+
+        // const port = new serialport(options.device, { autoOpen: false })
+        const port = new serialport(options.device, { autoOpen: false, baudRate:115200 })
+
+        port.open(function (err) {
+            if (err) {
+                return console.log('Error opening port: ', err.message)
+            }
+
+            console.log('device opened');
+            console.log('waiting on data');
+        });
+
+        let machine = new Machine(socket, options.port);
+        let joystickController = new joystick.Controller(machine);
+        let mpgController = new mpg.Controller(machine);
+        let buttonsController = new buttons.Controller(machine);
+        
+        // const parser = port.pipe(new Readline({ delimiter: '\n' }));
+        const parser = port.pipe(new Readline({ delimiter: '\r\n' }));
+        
+        // port.on('data', data => console.log({ port: data }))
+        // parser.on('data', data => console.log({ parser: data }))
+
+        parser.on("data", function(data) {
+            var payload = getPayload(data);
+
+            switch(payload.command) {
+                case COMMAND_BUTTON:
+                    buttonsController.updateState(payload);
+                    // buttonsController.printState();
+                    break;
+
+                case COMMAND_JOYSTICK_DATA:
+                    joystickController.updateState(payload);
+                    // joystickController.printState();
+
+                    break;
+
+                case COMMAND_MPG_CLICK:
+                    mpgController.updateState(payload);
+                    // mpgController.printState();
+
+                    break;
+            }
+        });
+    });
+};
+
+if (options.port) {
+    createServer(options);
+    return;
+}
+
+serialport.list().then(function (ports) {
+    const choices = ports.map(function(port) {
+        return port.path;
+    });
+
+    inquirer.prompt([{
+        type: 'list',
+        name: 'port',
+        message: 'Specify which port you want to use?',
+        choices: choices
+    }]).then(function(answers) {
+        options.port = answers.port;
+
+        createServer(options);
+    });
+}).catch((err) => {
+    console.error(err)
+    process.exit(1)
+})
