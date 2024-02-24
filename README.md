@@ -1,5 +1,7 @@
 # cncjs-pendant
 
+Read the discussion that lead to this build [here](https://community.carbide3d.com/t/cncjs-joystick-pendant/33001)
+
 ## Installation
 
 ```bash
